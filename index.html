@@ -247,6 +247,14 @@ th .arr{color:var(--accent)}
     <div class="seg" id="topN"><button type="button" data-v="10" aria-pressed="true">Top 10</button><button type="button" data-v="20" aria-pressed="false">Top 20</button><button type="button" data-v="50" aria-pressed="false">Top 50</button></div></div>
     <div class="tbl scroll" id="tTop"></div></section>
 
+  <section class="panel c12" id="partPanel"><div class="ph"><h2>Part-wise value <small id="pwSub">which parts hold the most value in the current view</small></h2>
+    <div class="tools"><input type="search" id="pwq" class="ctl" placeholder="Search part…" style="width:200px"></div></div>
+    <div class="chart" id="pwBox" style="height:380px"><canvas id="chPart" aria-label="Top parts by value"></canvas></div>
+    <div class="tbl scroll" id="tPart" style="max-height:520px"></div>
+    <div class="pager"><span id="pwInfo"></span><div class="pg"><label for="pwSize" class="note">Rows</label><select id="pwSize" class="ctl"><option>25</option><option selected>50</option><option>100</option><option>250</option></select>
+      <button class="btn sm" id="pwPrev" type="button">Previous</button><span id="pwNum"></span><button class="btn sm" id="pwNext" type="button">Next</button></div></div>
+    <p class="note">One row per part number, summed across all its stock lines and locations that match the filters. Select "More Than 1 Year" to see which old parts carry the most value.</p></section>
+
   <section class="panel c12" id="detailPanel"><div class="ph"><h2>Detailed material table <small id="dCount"></small></h2>
     <div class="tools">
       <input type="search" id="dq" class="ctl" placeholder="Search in table…" style="width:220px">
@@ -301,7 +309,8 @@ const DT = {sort:{k:'age',dir:-1}, page:0, size:50, q:'', cols:null, widths:{}};
 
 function enrich(recs){
   recs.forEach(r=>{
-    if(r.d){ const [y,m,d]=r.d.split('-').map(Number); r.age=Math.round((todayUTC-Date.UTC(y,m-1,d))/864e5); }
+    if(r.sa!=null) r.age=r.sa;
+    else if(r.d){ const [y,m,d]=r.d.split('-').map(Number); r.age=Math.round((todayUTC-Date.UTC(y,m-1,d))/864e5); }
     else r.age=null;
     const a = r.age==null||r.age<0 ? AGE_X : AGES.find(a=>r.age>=a.min&&r.age<=a.max);
     r.ak=a.k;
@@ -369,7 +378,7 @@ function baseOpts(o={}){
     indexAxis:o.h?'y':'x',
     scales:{x:{stacked:!!o.stack,grid:{display:!!o.h,color:line},border:{display:false},ticks:Object.assign({color:o.h?muted:ink2,font:{family:'Public Sans',size:11},maxRotation:0,autoSkip:!o.h},o.h?{callback:v=>mfmt(v)}:{})},
             y:{stacked:!!o.stack,beginAtZero:true,grid:{display:!o.h,color:line},border:{display:false},ticks:Object.assign({color:o.h?ink2:muted,font:{family:'Public Sans',size:11},autoSkip:false},o.h?{}:{callback:v=>mfmt(v)})}},
-    onClick:o.click?(e,els)=>{ if(els.length) o.click(els[0].index, els[0].datasetIndex); }:undefined,
+    onClick:o.click?(e,els)=>{ if(els.length){ const i=els[0].index, d=els[0].datasetIndex; setTimeout(()=>o.click(i,d),0); } }:undefined,
     onHover:o.click?(e,els)=>{ e.native.target.style.cursor=els.length?'pointer':'default'; }:undefined};
 }
 function mk(id,cfg){ if(charts[id]) charts[id].destroy(); charts[id]=new Chart($(id),cfg); }
@@ -388,7 +397,7 @@ function donut(id, items, center){
   const centerText={id:'ct',afterDraw(c){ const {ctx,chartArea:a}=c; const x=(a.left+a.right)/2,y=(a.top+a.bottom)/2; ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillStyle=css('--ink'); ctx.font='700 20px "Archivo Narrow", sans-serif'; ctx.fillText(center,x,y-6); ctx.fillStyle=css('--muted'); ctx.font='500 9.5px "JetBrains Mono", monospace'; ctx.fillText(MEAS==='v'?'VALUE':'QUANTITY',x,y+12); ctx.restore(); }};
   mk(id,{type:'doughnut',plugins:[centerText],data:{labels:items.map(x=>x.l),datasets:[{data:items.map(x=>x.v),backgroundColor:items.map(x=>x.c),borderColor:css('--surface'),borderWidth:2,hoverOffset:4}]},
-    options:{responsive:true,maintainAspectRatio:false,cutout:'64%',animation:{duration:300},onClick:(e,els)=>{ if(els.length&&items[els[0].index].click) items[els[0].index].click(); },
+    options:{responsive:true,maintainAspectRatio:false,cutout:'64%',animation:{duration:300},onClick:(e,els)=>{ if(els.length&&items[els[0].index].click){ const f=items[els[0].index].click; setTimeout(f,0); } },
       plugins:{legend:{position:'bottom',labels:{color:css('--ink-2'),boxWidth:10,boxHeight:10,padding:8,font:{family:'Public Sans',size:11},
         generateLabels:c=>items.map((x,i)=>({text:`${x.l} ${tot?(x.v/tot*100).toFixed(0):0}%`,fillStyle:x.c,strokeStyle:x.c,fontColor:css('--ink-2'),index:i,hidden:false}))}},
         tooltip:{backgroundColor:css('--band'),padding:10,cornerRadius:7,callbacks:{label:c=>` ${c.label}: ${mfmt(c.raw)} (${tot?(c.raw/tot*100).toFixed(1):0}%)`}}}}});
@@ -418,7 +427,7 @@ function render(){
   // KPIs
   const k=(lab,val,sub,cls='')=>`<div class="kpi ${cls}"><div class="k">${lab}</div><div class="v" title="${esc(val)}">${val}</div><div class="s">${sub||'&nbsp;'}</div></div>`;
   $('kpis').innerHTML =
-    k('Total material / parts', N0(parts), `${N0(A.n)} stock lines across ${new Set(L.map(r=>r.wh)).size} locations`) +
+    k('Unique parts', N0(parts), `${N0(A.n)} stock lines · ${new Set(L.map(r=>r.wh)).size} locations`) +
     k('Total quantity', Qs(A.q), N2(A.q)+' units (mixed UoM)') +
     k('Total material value', INRs(A.v), INR(A.v), 'hero') +
     k('Total aging value (6 M+)', INRs(agingV), `${P(agingV,A.v)} of value · qty ${Qs(agingQ)}`, agingV>0?'alert':'');
@@ -426,7 +435,7 @@ function render(){
     <div class="t"><b>${a.l}</b><span>${a.d}</span></div>
     <div class="lab">Quantity</div><div class="lab" style="text-align:right">Value</div>
     <div class="val">${Qs(A[a.k+'q'])}</div><div class="val" style="text-align:right">${INRs(A[a.k+'v'])}</div>
-    <div class="pc" style="text-align:left">${P(A[a.k+'q'],A.q)} of qty</div><div class="pc">${P(A[a.k+'v'],A.v)} of value</div></button>`).join('');
+    <div class="pc" style="text-align:left">${N0(new Set(L.filter(r=>r.ak===a.k).map(r=>r.pc)).size)} parts · ${N0(A[a.k+'n'])} lines</div><div class="pc">${P(A[a.k+'v'],A.v)} of value</div></button>`).join('');
   $('agegrid').querySelectorAll('.age').forEach(b=>b.onclick=()=>setF('age',b.dataset.k,true));
 
   // aging distribution (ignores the aging filter so the mix stays visible)
@@ -435,8 +444,8 @@ function render(){
   $('ageSub').textContent = MEAS==='v'?'by value':'by quantity';
   mk('chAge',{type:'bar',data:{labels:ks.map(k=>ageOf(k).l),datasets:[{data:ks.map(k=>AA[k+MEAS]),backgroundColor:ks.map(k=>F.age==='All'||F.age===k?ageColor(k):css('--line-2')),borderRadius:4,borderSkipped:'start',maxBarThickness:64}]},
     options:baseOpts({click:i=>setF('age',ks[i],true),tip:{label:c=>` ${mfmt(c.raw)} (${P(c.raw,AA[MEAS])})`,afterLabel:c=>MEAS==='v'?` Qty: ${Qs(AA[ks[c.dataIndex]+'q'])}`:` Value: ${INRs(AA[ks[c.dataIndex]+'v'])}`}})});
-  table('tAge',[{k:'name',l:'Aging',f:(v,r)=>r.key?agePill(r.key):'<b>Total</b>'},{k:'n',l:'Lines',n:1,f:N0},{k:'q',l:'Quantity',n:1,f:Qs},{k:'qp',l:'Qty %',n:1},{k:'v',l:'Value',n:1,f:INRs},{k:'vp',l:'Value %',n:1}],
-    ks.map(k=>({key:k,n:AA[k+'n'],q:AA[k+'q'],v:AA[k+'v'],qp:P(AA[k+'q'],AA.q),vp:P(AA[k+'v'],AA.v)})),{click:r=>setF('age',r.key,true),total:{n:AA.n,q:AA.q,v:AA.v,qp:'100%',vp:'100%'}});
+  table('tAge',[{k:'name',l:'Aging',f:(v,r)=>r.key?agePill(r.key):'<b>Total</b>'},{k:'u',l:'Parts',n:1,f:N0},{k:'n',l:'Lines',n:1,f:N0},{k:'q',l:'Quantity',n:1,f:Qs},{k:'qp',l:'Qty %',n:1},{k:'v',l:'Value',n:1,f:INRs},{k:'vp',l:'Value %',n:1}],
+    ks.map(k=>({key:k,u:new Set(LA.filter(r=>r.ak===k).map(r=>r.pc)).size,n:AA[k+'n'],q:AA[k+'q'],v:AA[k+'v'],qp:P(AA[k+'q'],AA.q),vp:P(AA[k+'v'],AA.v)})),{click:r=>setF('age',r.key,true),total:{u:new Set(LA.map(r=>r.pc)).size,n:AA.n,q:AA.q,v:AA.v,qp:'100%',vp:'100%'}});
 
   // warehouse-wise (ignores unit filter so all warehouses stay visible)
   const LU = filtered('unit');
@@ -503,9 +512,59 @@ function render(){
   table('tTop',[{k:'pc',l:'Part number',f:v=>`<span class="mono">${esc(v)}</span>`},{k:'pd',l:'Description',wrap:1},{k:'cust',l:'Customer'},{k:'unit',l:'Warehouse'},{k:'whn',l:'Store',wrap:1},
     {k:'q',l:'Qty',n:1,f:N2},{k:'v',l:'Value',n:1,f:INR},{k:'d',l:'Material date',f:fmtD},{k:'age',l:'Age (days)',n:1,f:N0},{k:'ak',l:'Aging',f:agePill}], tops, {click:openRow});
 
+  renderParts(L);
   renderDetail(L);
   renderDQ();
 }
+
+
+// ---------- part-wise value ----------
+const PW={sort:{k:'v',dir:-1},page:0,size:50,q:''}; let pwList=[];
+function partGroups(L){
+  const m=new Map();
+  for(const r of L){ let g=m.get(r.pc);
+    if(!g){ g={pc:r.pc,pd:r.pd,cust:r.cust,cat:r.cat,q:0,v:0,n:0,locs:new Set(),units:new Set(),age:null,d:null,ak:r.ak,rows:[]}; m.set(r.pc,g); }
+    g.q+=r.q; g.v+=r.v; g.n++; g.locs.add(r.wh); g.units.add(r.unit); g.rows.push(r);
+    if(r.age!=null && (g.age==null || r.age>g.age)){ g.age=r.age; g.d=r.d; g.ak=r.ak; } }
+  const tot=L.reduce((s,r)=>s+r.v,0);
+  return [...m.values()].map(g=>({...g,nl:g.locs.size,un:[...g.units].join(', '),rate:g.q?g.v/g.q:0,sh:tot?g.v/tot:0}));
+}
+function renderParts(L){
+  if(L) pwList=partGroups(L);
+  const q=PW.q.trim().toLowerCase();
+  let rows=q?pwList.filter(g=>(g.pc+' '+g.pd+' '+g.cust).toLowerCase().includes(q)):pwList.slice();
+  const {k,dir}=PW.sort; rows.sort((a,b)=>{ const x=a[k],y=b[k]; if(x==null&&y==null) return 0; if(x==null) return 1; if(y==null) return -1; return (typeof x==='number'?x-y:String(x).localeCompare(String(y)))*dir; });
+  const tv=rows.reduce((s,g)=>s+g.v,0), tq=rows.reduce((s,g)=>s+g.q,0);
+  $('pwSub').textContent=`${N0(rows.length)} unique parts · qty ${Qs(tq)} · value ${INRs(tv)}`;
+  // chart: top 15 by current measure
+  const top=pwList.slice().sort((a,b)=>b[MEAS]-a[MEAS]).slice(0,15);
+  $('pwBox').hidden=!top.length;
+  if(top.length){
+    $('pwBox').style.height=Math.max(220,top.length*26+50)+'px';
+    const lab=g=>{ const d=g.pd.length>34?g.pd.slice(0,33)+'…':g.pd; return g.pc+'  '+d; };
+    mk('chPart',{type:'bar',data:{labels:top.map(lab),datasets:[{data:top.map(g=>g[MEAS]),backgroundColor:top.map(g=>ageColor(g.ak)),borderRadius:3,borderSkipped:'start',maxBarThickness:18}]},
+      options:baseOpts({h:true,click:i=>openPart(top[i]),tip:{title:items=>{ const g=top[items[0].dataIndex]; return g.pc+' – '+g.pd; },
+        label:c=>{ const g=top[c.dataIndex]; return [` Value: ${INR(g.v)}`,` Qty: ${N2(g.q)}`,` Locations: ${g.nl} · oldest ${g.age==null?'—':N0(g.age)+' days'}`]; }}})});
+  }
+  const pages=Math.max(1,Math.ceil(rows.length/PW.size)); PW.page=Math.min(PW.page,pages-1);
+  const pg=rows.slice(PW.page*PW.size,(PW.page+1)*PW.size);
+  $('pwInfo').textContent=rows.length?`Showing ${N0(PW.page*PW.size+1)}–${N0(Math.min(rows.length,(PW.page+1)*PW.size))} of ${N0(rows.length)} parts`:'No parts';
+  $('pwNum').textContent=`Page ${PW.page+1} of ${pages}`; $('pwPrev').disabled=PW.page===0; $('pwNext').disabled=PW.page>=pages-1;
+  table('tPart',[{k:'rank',l:'#',n:1},{k:'pc',l:'Part number',f:v=>`<span class="mono">${esc(v)}</span>`},{k:'pd',l:'Description',wrap:1},{k:'cust',l:'Customer'},{k:'cat',l:'Category'},
+    {k:'un',l:'Warehouse',wrap:1},{k:'nl',l:'Locations',n:1,f:N0},{k:'q',l:'Quantity',n:1,f:N2},{k:'rate',l:'Avg rate',n:1,f:v=>INR(v)},{k:'v',l:'Value',n:1,f:v=>`<b>${INR(v)}</b>`},
+    {k:'sh',l:'% of value',n:1,f:v=>(v*100).toFixed(2)+'%'},{k:'d',l:'Oldest stock in',f:fmtD},{k:'age',l:'Max age (days)',n:1,f:v=>v==null?'—':N0(v)},{k:'ak',l:'Aging',f:agePill}],
+    pg.map((g,i)=>({...g,rank:PW.page*PW.size+i+1})),
+    {sort:PW.sort,onSort:kk=>{ PW.sort={k:kk,dir:PW.sort.k===kk?-PW.sort.dir:(['q','v','rate','sh','age','nl'].includes(kk)?-1:1)}; renderParts(); },click:openPart,
+     total:pg.length?{rank:'',pc:'Total',pd:`${N0(rows.length)} parts`,cust:'',cat:'',un:'',nl:'',q:tq,rate:tq?tv/tq:0,v:tv,sh:pwList.length?tv/pwList.reduce((s,g)=>s+g.v,0):0,d:'',age:null,ak:'AX'}:null});
+  const totRow=$('tPart').querySelector('tr.tot'); if(totRow){ const c=totRow.children; c[c.length-1].innerHTML=''; c[c.length-2].textContent=''; }
+}
+function openPart(g){
+  const r=g.rows.slice().sort((a,b)=>(b.age??-1)-(a.age??-1))[0];
+  openRow(r);
+}
+$('pwq').oninput=e=>{ PW.q=e.target.value; PW.page=0; later(()=>renderParts(),200); };
+$('pwSize').onchange=e=>{ PW.size=+e.target.value; PW.page=0; renderParts(); };
+$('pwPrev').onclick=()=>{ PW.page--; renderParts(); }; $('pwNext').onclick=()=>{ PW.page++; renderParts(); };
 
 // ---------- detail table ----------
 const DCOLS=[
